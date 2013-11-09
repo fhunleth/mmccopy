@@ -34,16 +34,16 @@
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
-#ifdef _LARGEFILE64_SOURCE
-#define OFF_T off64_t
-#else
-#define OFF_T off_t
+// Memory cards are too big to bother with systems
+// that don't support large file sizes any more.
+#ifndef _LARGEFILE64_SOURCE
+#error "mmccopy requires large file support"
 #endif
 
 struct suffix_multiplier
 {
     const char *suffix;
-    OFF_T multiple;
+    off64_t multiple;
 };
 
 struct suffix_multiplier suffix_multipliers[] = {
@@ -64,16 +64,17 @@ void usage(const char *argv0)
     fprintf(stderr, "  -o <Offset from the beginning of the memory card>\n");
     fprintf(stderr, "  -n   Report numeric progress\n");
     fprintf(stderr, "  -p   Report progress\n");
+    fprintf(stderr, "  -y   Accept automatically found memory card\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Offset and size may be specified with the following suffixes:\n");
     for (size_t i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++)
         fprintf(stderr, "  %3s  %d\n", suffix_multipliers[i].suffix, (int) suffix_multipliers[i].multiple);
 }
 
-OFF_T parse_size(const char *str)
+off64_t parse_size(const char *str)
 {
     char *suffix;
-    OFF_T value = strtoul(str, &suffix, 10);
+    off64_t value = strtoul(str, &suffix, 10);
 
     if (suffix == str)
         errx(EXIT_FAILURE, "Expecting number but got '%s'\n", str);
@@ -128,18 +129,77 @@ void umount_all_on_dev(const char *mmc_device)
     }
 }
 
+bool is_mmc_device(const char *devpath)
+{
+    // Check 1: Doesn't exist -> false
+    int fd = open(devpath, O_RDONLY);
+    if (fd < 0)
+        return false;
+
+    off64_t len = lseek64(fd, 0, SEEK_END);
+    close(fd);
+
+    // Check 2: Capacity larger than 16 GiB -> false
+    if (len > 17179869184LL)
+        return false;
+
+    // Certainly there are more checks that we can do
+    // to avoid false memory card detects...
+
+    return true;
+}
+
+char *find_mmc_device()
+{
+    char *possible[64] = {0};
+    size_t possible_ix = 0;
+
+    // Scan memory cards connected via USB. These are /dev/sd_ devices.
+    // NOTE: Don't scan /dev/sda, since I don't think this is ever right
+    // for any use case.
+    for (char c = 'b'; c != 'z'; c++) {
+        char devpath[64];
+        sprintf(devpath, "/dev/sd%c", c);
+
+        if (is_mmc_device(devpath) && possible_ix < NUM_ELEMENTS(possible))
+            possible[possible_ix++] = strdup(devpath);
+    }
+
+    // Scan the mmcblk devices
+    for (int i = 0; i < 16; i++) {
+        char devpath[64];
+        sprintf(devpath, "/dev/mmcblk%d", i);
+
+        if (is_mmc_device(devpath) && possible_ix < NUM_ELEMENTS(possible))
+            possible[possible_ix++] = strdup(devpath);
+    }
+
+    if (possible_ix == 0)
+        return 0;
+    else if (possible_ix == 1)
+        return possible[0];
+    else {
+        fprintf(stderr, "Too many possible memory cards found: \n");
+        for (size_t i = 0; i < possible_ix; i++)
+            fprintf(stderr, "  %s\n", possible[i]);
+        fprintf(stderr, "Pick one and specify it explicitly on the commandline.\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
 int main(int argc, char *argv[])
 {
 
     const char *mmc_device = 0;
     const char *source = "-";
-    OFF_T amount_to_write = 0;
-    OFF_T seek_offset = 0;
+    off64_t amount_to_write = 0;
+    off64_t seek_offset = 0;
     bool numeric_progress = false;
     bool human_progress = false;
+    bool accept_found_device = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:s:o:np")) != -1) {
+    while ((opt = getopt(argc, argv, "d:s:o:npy")) != -1) {
         switch (opt) {
         case 'd':
             mmc_device = optarg;
@@ -156,6 +216,9 @@ int main(int argc, char *argv[])
         case 'p':
             human_progress = true;
             break;
+        case 'y':
+            accept_found_device = true;
+            break;
         default: /* '?' */
             usage(argv[0]);
             exit(EXIT_FAILURE);
@@ -163,10 +226,20 @@ int main(int argc, char *argv[])
     }
 
     if (human_progress && numeric_progress)
-        errx(EXIT_FAILURE, "Pick either -n or -p, but not both.\n");
+        errx(EXIT_FAILURE, "pick either -n or -p, but not both.\n");
 
-    if (!mmc_device)
-        errx(EXIT_FAILURE, "Must specify destination\n");
+    if (!mmc_device) {
+        mmc_device = find_mmc_device();
+        if (!mmc_device)
+            errx(EXIT_FAILURE, "memory card couldn't be found automatically\n");
+
+        if (!accept_found_device) {
+            fprintf(stderr, "Use memory card found at %s? [y/N] ", mmc_device);
+            int response = fgetc(stdin);
+            if (response != 'y' && response != 'Y')
+                errx(EXIT_FAILURE, "aborted\n");
+        }
+    }
 
     if (optind < argc)
         source = argv[optind];
@@ -197,14 +270,8 @@ int main(int argc, char *argv[])
     if (output_fd < 0)
         err(EXIT_FAILURE, "%s", mmc_device);
 
-    if (
-#ifdef _LARGEFILE64_SOURCE
-            lseek64(output_fd, seek_offset, SEEK_SET) == (OFF_T) -1
-#else
-            lseek(output_fd, seek_offset, SEEK_SET) == (OFF_T) -1
-#endif
-        )
-        err(EXIT_FAILURE, "seek");
+    if (lseek64(output_fd, seek_offset, SEEK_SET) == (off64_t) -1)
+        err(EXIT_FAILURE, "lseek64");
 
 #define BUFFER_SIZE (1024*1024)
 
@@ -217,10 +284,10 @@ int main(int argc, char *argv[])
         }
     }
     char *buffer = malloc(BUFFER_SIZE);
-    OFF_T total_to_write = amount_to_write;
+    off64_t total_to_write = amount_to_write;
     for (;;) {
         size_t amount_to_read = BUFFER_SIZE;
-        if (amount_to_write != 0 && amount_to_write < (OFF_T) amount_to_read)
+        if (amount_to_write != 0 && amount_to_write < (off64_t) amount_to_read)
             amount_to_read = amount_to_write;
 
         ssize_t amount_read = read(input_fd, buffer, amount_to_read);
