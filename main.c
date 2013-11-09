@@ -1,13 +1,36 @@
-#include <sys/types.h>
-#include <sys/stat.h>
+/* The MIT License (MIT)
+ *
+ * Copyright (c) 2013 Frank Hunleth
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of
+ * this software and associated documentation files (the "Software"), to deal in
+ * the Software without restriction, including without limitation the rights to
+ * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+ * the Software, and to permit persons to whom the Software is furnished to do so,
+ * subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+ * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+ * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
-#include <err.h>
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
@@ -43,8 +66,7 @@ void usage(const char *argv0)
     fprintf(stderr, "  -p   Report progress\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Offset and size may be specified with the following suffixes:\n");
-    size_t i;
-    for (i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++)
+    for (size_t i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++)
         fprintf(stderr, "  %3s  %d\n", suffix_multipliers[i].suffix, (int) suffix_multipliers[i].multiple);
 }
 
@@ -59,14 +81,51 @@ OFF_T parse_size(const char *str)
     if (*suffix == '\0')
         return value;
 
-    size_t i;
-    for (i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++) {
+    for (size_t i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++) {
         if (strcmp(suffix_multipliers[i].suffix, suffix) == 0)
             return value * suffix_multipliers[i].multiple;
     }
 
     errx(EXIT_FAILURE, "Unknown size multiplier '%s'\n", suffix);
     return 0;
+}
+
+void umount_all_on_dev(const char *mmc_device)
+{
+    FILE *fp = fopen("/proc/mounts", "r");
+    if (!fp)
+        err(EXIT_FAILURE, "/proc/mounts");
+
+    char *todo[64] = {0};
+    int todo_ix = 0;
+
+    while (!feof(fp)) {
+        char line[256] = {0};
+        fgets(line, sizeof(line), fp);
+
+        char devname[64];
+        char mountpoint[256];
+        if (sscanf(line, "%s %s", devname, mountpoint) != 2)
+            continue;
+
+        if (strstr(devname, mmc_device) == devname) {
+            // mmc_device is a prefix of this device, i.e. mmc_device is /dev/sdc
+            // and /dev/sdc1 is mounted.
+
+            if (todo_ix == NUM_ELEMENTS(todo))
+                errx(EXIT_FAILURE, "Device mounted too many times\n");
+
+            todo[todo_ix++] = strdup(mountpoint);
+        }
+    }
+    fclose(fp);
+
+    for (int i = 0; i < todo_ix; i++) {
+        if (umount(todo[i]) < 0)
+            err(EXIT_FAILURE, "umount %s", todo[i]);
+
+        free(todo[i]);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -131,7 +190,10 @@ int main(int argc, char *argv[])
             amount_to_write == 0)
         errx(EXIT_FAILURE, "Specify input size to show progress");
 
-    int output_fd = open(mmc_device, O_WRONLY);
+    // Don't access the device if someone is using it.
+    umount_all_on_dev(mmc_device);
+
+    int output_fd = open(mmc_device, O_WRONLY | O_SYNC);
     if (output_fd < 0)
         err(EXIT_FAILURE, "%s", mmc_device);
 
