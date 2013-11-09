@@ -1,18 +1,9 @@
-# Object files
 *.o
-*.ko
-
-# Libraries
-*.lib
-*.a
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
+.deps
+Makefile
+autom4te.cache/
+config.h
+config.log
+config.status
+mmccopy
+stamp-h1

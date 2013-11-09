@@ -34,16 +34,10 @@
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
-// Memory cards are too big to bother with systems
-// that don't support large file sizes any more.
-#ifndef _LARGEFILE64_SOURCE
-#error "mmccopy requires large file support"
-#endif
-
 struct suffix_multiplier
 {
     const char *suffix;
-    off64_t multiple;
+    off_t multiple;
 };
 
 struct suffix_multiplier suffix_multipliers[] = {
@@ -71,10 +65,10 @@ void usage(const char *argv0)
         fprintf(stderr, "  %3s  %d\n", suffix_multipliers[i].suffix, (int) suffix_multipliers[i].multiple);
 }
 
-off64_t parse_size(const char *str)
+off_t parse_size(const char *str)
 {
     char *suffix;
-    off64_t value = strtoul(str, &suffix, 10);
+    off_t value = strtoul(str, &suffix, 10);
 
     if (suffix == str)
         errx(EXIT_FAILURE, "Expecting number but got '%s'\n", str);
@@ -102,7 +96,8 @@ void umount_all_on_dev(const char *mmc_device)
 
     while (!feof(fp)) {
         char line[256] = {0};
-        fgets(line, sizeof(line), fp);
+        if (!fgets(line, sizeof(line), fp))
+            break;
 
         char devname[64];
         char mountpoint[256];
@@ -136,10 +131,13 @@ bool is_mmc_device(const char *devpath)
     if (fd < 0)
         return false;
 
-    off64_t len = lseek64(fd, 0, SEEK_END);
+    // Check 2: lseek fails -> false
+    off_t len = lseek(fd, 0, SEEK_END);
     close(fd);
+    if (len < 0)
+        return false;
 
-    // Check 2: Capacity larger than 16 GiB -> false
+    // Check 3: Capacity larger than 16 GiB -> false
     if (len > 17179869184LL)
         return false;
 
@@ -192,11 +190,16 @@ int main(int argc, char *argv[])
 
     const char *mmc_device = 0;
     const char *source = "-";
-    off64_t amount_to_write = 0;
-    off64_t seek_offset = 0;
+    off_t amount_to_write = 0;
+    off_t seek_offset = 0;
     bool numeric_progress = false;
     bool human_progress = false;
     bool accept_found_device = false;
+
+    // Memory cards are too big to bother with systems
+    // that don't support large file sizes any more.
+    if (sizeof(off_t) != 8)
+        errx(EXIT_FAILURE, "recompile with largefile support");
 
     int opt;
     while ((opt = getopt(argc, argv, "d:s:o:npy")) != -1) {
@@ -270,8 +273,8 @@ int main(int argc, char *argv[])
     if (output_fd < 0)
         err(EXIT_FAILURE, "%s", mmc_device);
 
-    if (lseek64(output_fd, seek_offset, SEEK_SET) == (off64_t) -1)
-        err(EXIT_FAILURE, "lseek64");
+    if (lseek(output_fd, seek_offset, SEEK_SET) == (off_t) -1)
+        err(EXIT_FAILURE, "lseek");
 
 #define BUFFER_SIZE (1024*1024)
 
@@ -284,10 +287,10 @@ int main(int argc, char *argv[])
         }
     }
     char *buffer = malloc(BUFFER_SIZE);
-    off64_t total_to_write = amount_to_write;
+    off_t total_to_write = amount_to_write;
     for (;;) {
         size_t amount_to_read = BUFFER_SIZE;
-        if (amount_to_write != 0 && amount_to_write < (off64_t) amount_to_read)
+        if (amount_to_write != 0 && amount_to_write < (off_t) amount_to_read)
             amount_to_read = amount_to_write;
 
         ssize_t amount_read = read(input_fd, buffer, amount_to_read);
