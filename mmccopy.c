@@ -52,13 +52,17 @@ struct suffix_multiplier suffix_multipliers[] = {
 
 void usage(const char *argv0)
 {
-    fprintf(stderr, "Usage: %s [options] [filename]\n", argv0);
+    fprintf(stderr, "Usage: %s [options] [inputpath]\n", argv0);
     fprintf(stderr, "  -d <Device file for the memory card>\n");
     fprintf(stderr, "  -s <Amount to write>\n");
     fprintf(stderr, "  -o <Offset from the beginning of the memory card>\n");
     fprintf(stderr, "  -n   Report numeric progress\n");
     fprintf(stderr, "  -p   Report progress\n");
     fprintf(stderr, "  -y   Accept automatically found memory card\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "The inputpath specifies the location of the image to write to\n");
+    fprintf(stderr, "the memory card. If it is unspecified or '-', the image will be\n");
+    fprintf(stderr, "read from stdin.\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Offset and size may be specified with the following suffixes:\n");
     for (size_t i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++)
@@ -71,7 +75,7 @@ off_t parse_size(const char *str)
     off_t value = strtoul(str, &suffix, 10);
 
     if (suffix == str)
-        errx(EXIT_FAILURE, "Expecting number but got '%s'\n", str);
+        errx(EXIT_FAILURE, "Expecting number but got '%s'", str);
 
     if (*suffix == '\0')
         return value;
@@ -81,7 +85,7 @@ off_t parse_size(const char *str)
             return value * suffix_multipliers[i].multiple;
     }
 
-    errx(EXIT_FAILURE, "Unknown size multiplier '%s'\n", suffix);
+    errx(EXIT_FAILURE, "Unknown size multiplier '%s'", suffix);
     return 0;
 }
 
@@ -109,7 +113,7 @@ void umount_all_on_dev(const char *mmc_device)
             // and /dev/sdc1 is mounted.
 
             if (todo_ix == NUM_ELEMENTS(todo))
-                errx(EXIT_FAILURE, "Device mounted too many times\n");
+                errx(EXIT_FAILURE, "Device mounted too many times");
 
             todo[todo_ix++] = strdup(mountpoint);
         }
@@ -229,18 +233,21 @@ int main(int argc, char *argv[])
     }
 
     if (human_progress && numeric_progress)
-        errx(EXIT_FAILURE, "pick either -n or -p, but not both.\n");
+        errx(EXIT_FAILURE, "pick either -n or -p, but not both.");
 
     if (!mmc_device) {
         mmc_device = find_mmc_device();
         if (!mmc_device)
-            errx(EXIT_FAILURE, "memory card couldn't be found automatically\n");
+            errx(EXIT_FAILURE, "memory card couldn't be found automatically (permissions?)");
 
         if (!accept_found_device) {
+            if (strcmp(source, "-") == 0)
+                errx(EXIT_FAILURE, "Cannot confirm %s when writing data from stdin. Rerun with -y.", mmc_device);
+
             fprintf(stderr, "Use memory card found at %s? [y/N] ", mmc_device);
             int response = fgetc(stdin);
             if (response != 'y' && response != 'Y')
-                errx(EXIT_FAILURE, "aborted\n");
+                errx(EXIT_FAILURE, "aborted");
         }
     }
 
