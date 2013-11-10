@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
 
     const char *mmc_device = 0;
     const char *source = "-";
-    off_t amount_to_write = 0;
+    off_t amount_to_write = -1;
     off_t seek_offset = 0;
     bool numeric_progress = false;
     bool human_progress = false;
@@ -264,13 +264,13 @@ int main(int argc, char *argv[])
         if (fstat(input_fd, &st))
             err(EXIT_FAILURE, "fstat");
 
-        if (amount_to_write == 0 ||
+        if (amount_to_write < 0 ||
             st.st_size < amount_to_write)
             amount_to_write = st.st_size;
     }
 
     if ((numeric_progress || human_progress) &&
-            amount_to_write == 0)
+            amount_to_write < 0)
         errx(EXIT_FAILURE, "Specify input size to show progress");
 
     // Don't access the device if someone is using it.
@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
 
 #define BUFFER_SIZE (1024*1024)
 
-    if (amount_to_write > 0) {
+    if (amount_to_write >= 0) {
         if (numeric_progress)
             printf("0\n");
         if (human_progress) {
@@ -295,9 +295,9 @@ int main(int argc, char *argv[])
     }
     char *buffer = malloc(BUFFER_SIZE);
     off_t total_to_write = amount_to_write;
-    for (;;) {
+    while (amount_to_write != 0) {
         size_t amount_to_read = BUFFER_SIZE;
-        if (amount_to_write != 0 && amount_to_write < (off_t) amount_to_read)
+        if (amount_to_write > 0 && amount_to_write < (off_t) amount_to_read)
             amount_to_read = amount_to_write;
 
         ssize_t amount_read = read(input_fd, buffer, amount_to_read);
@@ -307,7 +307,8 @@ int main(int argc, char *argv[])
         if (amount_read == 0)
             break;
 
-        amount_to_write -= amount_read;
+        if (amount_to_write > 0)
+	    amount_to_write -= amount_read;
 
         char *ptr = buffer;
         do {
@@ -323,13 +324,16 @@ int main(int argc, char *argv[])
             ptr += amount_written;
         } while (amount_read > 0);
 
-        int progress = 100 * (total_to_write - amount_to_write) / total_to_write;
-        if (numeric_progress)
-            printf("%d\n", progress);
-        if (human_progress) {
-            printf("\b\b\b\b%d%%", progress);
-            fflush(stdout);
-        }
+	// Only try to show progress if we know the total amount to write
+	if (total_to_write > 0) {
+	    int progress = 100 * (total_to_write - amount_to_write) / total_to_write;
+	    if (numeric_progress)
+		printf("%d\n", progress);
+	    if (human_progress) {
+		printf("\b\b\b\b%d%%", progress);
+		fflush(stdout);
+	    }
+	}
     }
     close(output_fd);
     if (input_fd != 0)
