@@ -235,6 +235,9 @@ int main(int argc, char *argv[])
     if (human_progress && numeric_progress)
         errx(EXIT_FAILURE, "pick either -n or -p, but not both.");
 
+    if (optind < argc)
+        source = argv[optind];
+
     if (!mmc_device) {
         mmc_device = find_mmc_device();
         if (!mmc_device)
@@ -250,9 +253,6 @@ int main(int argc, char *argv[])
                 errx(EXIT_FAILURE, "aborted");
         }
     }
-
-    if (optind < argc)
-        source = argv[optind];
 
     int input_fd = 0;
     if (strcmp(source, "-") != 0) {
