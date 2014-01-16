@@ -34,16 +34,16 @@
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
-#define ONE_GiB  (1024 * 1024 * 1024)
-#define ONE_MiB  (1024 * 1024)
-#define ONE_KiB  (1024)
+#define ONE_KiB  (1024ULL)
+#define ONE_MiB  (1024 * ONE_KiB)
+#define ONE_GiB  (1024 * ONE_MiB)
 
 #define COPY_BUFFER_SIZE ONE_MiB
 
 struct suffix_multiplier
 {
     const char *suffix;
-    off_t multiple;
+    size_t multiple;
 };
 
 struct suffix_multiplier suffix_multipliers[] = {
@@ -79,10 +79,10 @@ void usage(const char *argv0)
         fprintf(stderr, "  %3s  %d\n", suffix_multipliers[i].suffix, (int) suffix_multipliers[i].multiple);
 }
 
-off_t parse_size(const char *str)
+size_t parse_size(const char *str)
 {
     char *suffix;
-    off_t value = strtoul(str, &suffix, 10);
+    size_t value = strtoul(str, &suffix, 10);
 
     if (suffix == str)
         errx(EXIT_FAILURE, "Expecting number but got '%s'", str);
@@ -138,21 +138,27 @@ void umount_all_on_dev(const char *mmc_device)
     }
 }
 
-bool is_mmc_device(const char *devpath)
+size_t device_size(const char *devpath)
 {
-    // Check 1: Doesn't exist -> false
     int fd = open(devpath, O_RDONLY);
     if (fd < 0)
-        return false;
+        return 0;
 
-    // Check 2: lseek fails -> false
     off_t len = lseek(fd, 0, SEEK_END);
     close(fd);
-    if (len < 0)
+
+    return len < 0 ? 0 : len;
+}
+
+bool is_mmc_device(const char *devpath)
+{
+    // Check 1: Path exists and can read length
+    size_t len = device_size(devpath);
+    if (len == 0)
         return false;
 
-    // Check 3: Capacity larger than 16 GiB -> false
-    if (len > 17179869184LL)
+    // Check 2: Capacity larger than 32 GiB -> false
+    if (len > (32 * ONE_GiB))
         return false;
 
     // Certainly there are more checks that we can do
@@ -202,7 +208,7 @@ char *find_mmc_device()
 int calculate_progress(size_t written, size_t total)
 {
     if (total > 0)
-	return 100 * written / total;
+        return 100 * written / total;
     else
         return 0;
 }
@@ -214,7 +220,7 @@ void pretty_size(size_t amount, char *out)
     else if (amount >= ONE_MiB)
         sprintf(out, "%.2f MiB", ((double) amount) / ONE_MiB);
     else if (amount >= ONE_KiB)
-        sprintf(out, "%d KiB", ((int) amount / ONE_KiB));
+        sprintf(out, "%d KiB", (int) (amount / ONE_KiB));
     else
         sprintf(out, "%d bytes", (int) amount);
 }
@@ -223,16 +229,16 @@ void report_progress(size_t written, size_t total, bool numeric)
 {
     if (numeric) {
         // If numeric, write the percentage if we can figure it out.
-	printf("%d\n", calculate_progress(written, total));
+        printf("%d\n", calculate_progress(written, total));
     } else {
         // If this is for a human, then print the percent complete
         // if we can calculate it or the bytes written.
         if (total > 0)
-	    printf("\r%d%%", calculate_progress(written, total));
+            printf("\r%d%%", calculate_progress(written, total));
         else {
-            char buffer[32];
-            pretty_size(written, buffer);
-            printf("\r%s     ", buffer);
+            char sizestr[32];
+            pretty_size(written, sizestr);
+            printf("\r%s     ", sizestr);
         }
         fflush(stdout);
     }
@@ -300,7 +306,9 @@ int main(int argc, char *argv[])
             if (strcmp(source, "-") == 0)
                 errx(EXIT_FAILURE, "Cannot confirm %s when writing data from stdin. Rerun with -y.", mmc_device);
 
-            fprintf(stderr, "Use memory card found at %s? [y/N] ", mmc_device);
+            char sizestr[16];
+            pretty_size(device_size(mmc_device), sizestr);
+            fprintf(stderr, "Use %s memory card found at %s? [y/N] ", sizestr, mmc_device);
             int response = fgetc(stdin);
             if (response != 'y' && response != 'Y')
                 errx(EXIT_FAILURE, "aborted");
@@ -318,7 +326,7 @@ int main(int argc, char *argv[])
             err(EXIT_FAILURE, "fstat");
 
         if (total_to_write == 0 ||
-            st.st_size < total_to_write)
+                st.st_size < total_to_write)
             total_to_write = st.st_size;
     }
 
@@ -365,7 +373,7 @@ int main(int argc, char *argv[])
 
             amount_read -= amount_written;
             ptr += amount_written;
-	    total_written += amount_written;
+            total_written += amount_written;
         } while (amount_read > 0);
 
         if (!quiet)
