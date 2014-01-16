@@ -34,6 +34,12 @@
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
+#define ONE_GiB  (1024 * 1024 * 1024)
+#define ONE_MiB  (1024 * 1024)
+#define ONE_KiB  (1024)
+
+#define COPY_BUFFER_SIZE ONE_MiB
+
 struct suffix_multiplier
 {
     const char *suffix;
@@ -43,11 +49,14 @@ struct suffix_multiplier
 struct suffix_multiplier suffix_multipliers[] = {
     {"b", 512},
     {"kB", 1000},
-    {"K", 1024},
+    {"K", ONE_KiB},
+    {"KiB", ONE_KiB},
     {"MB", 1000 * 1000},
-    {"M", 1024 * 1024},
+    {"M", ONE_MiB},
+    {"MiB", ONE_MiB},
     {"GB", 1000 * 1000 * 1000},
-    {"GiB", 1024 * 1024 * 1024}
+    {"G", ONE_GiB},
+    {"GiB", ONE_GiB}
 };
 
 void usage(const char *argv0)
@@ -58,6 +67,7 @@ void usage(const char *argv0)
     fprintf(stderr, "  -o <Offset from the beginning of the memory card>\n");
     fprintf(stderr, "  -n   Report numeric progress\n");
     fprintf(stderr, "  -p   Report progress\n");
+    fprintf(stderr, "  -q   Quiet\n");
     fprintf(stderr, "  -y   Accept automatically found memory card\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "The inputpath specifies the location of the image to write to\n");
@@ -189,16 +199,55 @@ char *find_mmc_device()
     }
 }
 
+int calculate_progress(size_t written, size_t total)
+{
+    if (total > 0)
+	return 100 * written / total;
+    else
+        return 0;
+}
+
+void pretty_size(size_t amount, char *out)
+{
+    if (amount >= ONE_GiB)
+        sprintf(out, "%.2f GiB", ((double) amount) / ONE_GiB);
+    else if (amount >= ONE_MiB)
+        sprintf(out, "%.2f MiB", ((double) amount) / ONE_MiB);
+    else if (amount >= ONE_KiB)
+        sprintf(out, "%d KiB", ((int) amount / ONE_KiB));
+    else
+        sprintf(out, "%d bytes", (int) amount);
+}
+
+void report_progress(size_t written, size_t total, bool numeric)
+{
+    if (numeric) {
+        // If numeric, write the percentage if we can figure it out.
+	printf("%d\n", calculate_progress(written, total));
+    } else {
+        // If this is for a human, then print the percent complete
+        // if we can calculate it or the bytes written.
+        if (total > 0)
+	    printf("\r%d%%", calculate_progress(written, total));
+        else {
+            char buffer[32];
+            pretty_size(written, buffer);
+            printf("\r%s     ", buffer);
+        }
+        fflush(stdout);
+    }
+}
+
 int main(int argc, char *argv[])
 {
 
     const char *mmc_device = 0;
     const char *source = "-";
-    off_t amount_to_write = -1;
+    size_t total_to_write = 0;
     off_t seek_offset = 0;
     bool numeric_progress = false;
-    bool human_progress = false;
     bool accept_found_device = false;
+    bool quiet = false;
 
     // Memory cards are too big to bother with systems
     // that don't support large file sizes any more.
@@ -206,13 +255,13 @@ int main(int argc, char *argv[])
         errx(EXIT_FAILURE, "recompile with largefile support");
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:s:o:npy")) != -1) {
+    while ((opt = getopt(argc, argv, "d:s:o:npqy")) != -1) {
         switch (opt) {
         case 'd':
             mmc_device = optarg;
             break;
         case 's':
-            amount_to_write = parse_size(optarg);
+            total_to_write = parse_size(optarg);
             break;
         case 'o':
             seek_offset = parse_size(optarg);
@@ -221,7 +270,11 @@ int main(int argc, char *argv[])
             numeric_progress = true;
             break;
         case 'p':
-            human_progress = true;
+            // This is now the default. Keep parameter around since I wrote
+            // some docs that include it.
+            break;
+        case 'q':
+            quiet = true;
             break;
         case 'y':
             accept_found_device = true;
@@ -232,8 +285,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (human_progress && numeric_progress)
-        errx(EXIT_FAILURE, "pick either -n or -p, but not both.");
+    if (quiet && numeric_progress)
+        errx(EXIT_FAILURE, "pick either -n or -q, but not both.");
 
     if (optind < argc)
         source = argv[optind];
@@ -264,14 +317,14 @@ int main(int argc, char *argv[])
         if (fstat(input_fd, &st))
             err(EXIT_FAILURE, "fstat");
 
-        if (amount_to_write < 0 ||
-            st.st_size < amount_to_write)
-            amount_to_write = st.st_size;
+        if (total_to_write == 0 ||
+            st.st_size < total_to_write)
+            total_to_write = st.st_size;
     }
 
-    if ((numeric_progress || human_progress) &&
-            amount_to_write < 0)
-        errx(EXIT_FAILURE, "Specify input size to show progress");
+    if (numeric_progress &&
+            total_to_write == 0)
+        errx(EXIT_FAILURE, "Specify input size to report numeric progress");
 
     // Don't access the device if someone is using it.
     umount_all_on_dev(mmc_device);
@@ -283,22 +336,15 @@ int main(int argc, char *argv[])
     if (lseek(output_fd, seek_offset, SEEK_SET) == (off_t) -1)
         err(EXIT_FAILURE, "lseek");
 
-#define BUFFER_SIZE (1024*1024)
+    if (!quiet)
+        report_progress(0, total_to_write, numeric_progress);
 
-    if (amount_to_write >= 0) {
-        if (numeric_progress)
-            printf("0\n");
-        if (human_progress) {
-            printf("0%%");
-            fflush(stdout);
-        }
-    }
-    char *buffer = malloc(BUFFER_SIZE);
-    off_t total_to_write = amount_to_write;
-    while (amount_to_write != 0) {
-        size_t amount_to_read = BUFFER_SIZE;
-        if (amount_to_write > 0 && amount_to_write < (off_t) amount_to_read)
-            amount_to_read = amount_to_write;
+    char *buffer = malloc(COPY_BUFFER_SIZE);
+    off_t total_written = 0;
+    while (total_to_write == 0 || total_written < total_to_write) {
+        size_t amount_to_read = COPY_BUFFER_SIZE;
+        if (total_to_write != 0 && total_to_write < amount_to_read)
+            amount_to_read = total_to_write;
 
         ssize_t amount_read = read(input_fd, buffer, amount_to_read);
         if (amount_read < 0)
@@ -306,9 +352,6 @@ int main(int argc, char *argv[])
 
         if (amount_read == 0)
             break;
-
-        if (amount_to_write > 0)
-	    amount_to_write -= amount_read;
 
         char *ptr = buffer;
         do {
@@ -322,27 +365,19 @@ int main(int argc, char *argv[])
 
             amount_read -= amount_written;
             ptr += amount_written;
+	    total_written += amount_written;
         } while (amount_read > 0);
 
-	// Only try to show progress if we know the total amount to write
-	if (total_to_write > 0) {
-	    int progress = 100 * (total_to_write - amount_to_write) / total_to_write;
-	    if (numeric_progress)
-		printf("%d\n", progress);
-	    if (human_progress) {
-		printf("\b\b\b\b%d%%", progress);
-		fflush(stdout);
-	    }
-	}
+        if (!quiet)
+            report_progress(total_written, total_to_write, numeric_progress);
     }
     close(output_fd);
     if (input_fd != 0)
         close(input_fd);
 
-    if (numeric_progress)
-        printf("100");
-    if (human_progress)
-        printf("\b\b\b\b100%%\n");
+    if (!quiet)
+        report_progress(total_written, total_to_write, numeric_progress);
+    printf("\n");
 
     free(buffer);
     exit(EXIT_SUCCESS);
