@@ -383,9 +383,14 @@ int main(int argc, char *argv[])
     if (input_fd != 0)
         close(input_fd);
 
-    if (!quiet)
+    if (!quiet) {
         report_progress(total_written, total_to_write, numeric_progress);
-    printf("\n");
+
+	// Numeric progress already prints linefeeds, so we don't need
+	// one at the very end.
+	if (!numeric_progress)
+	    printf("\n");
+    }
 
     free(buffer);
     exit(EXIT_SUCCESS);
