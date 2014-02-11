@@ -376,7 +376,7 @@ int main(int argc, char *argv[])
 
         if (!accept_found_device) {
             if (strcmp(data_pathname, "-") == 0)
-                errx(EXIT_FAILURE, "Cannot confirm use of %s when using stdin/stdout. Rerun with -y if location is correct.", mmc_device);
+                errx(EXIT_FAILURE, "Cannot confirm use of %s when using stdin/stdout.\nRerun with -y if location is correct.", mmc_device);
 
             char sizestr[16];
             pretty_size(device_size(mmc_device), sizestr);
