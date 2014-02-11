@@ -59,20 +59,34 @@ struct suffix_multiplier suffix_multipliers[] = {
     {"GiB", ONE_GiB}
 };
 
+// Progress and verbosity global variables
+bool numeric_progress = false;
+bool quiet = false;
+
 void usage(const char *argv0)
 {
-    fprintf(stderr, "Usage: %s [options] [inputpath]\n", argv0);
+    fprintf(stderr, "Usage: %s [options] [path]\n", argv0);
     fprintf(stderr, "  -d <Device file for the memory card>\n");
-    fprintf(stderr, "  -s <Amount to write>\n");
+    fprintf(stderr, "  -s <Amount to read/write>\n");
     fprintf(stderr, "  -o <Offset from the beginning of the memory card>\n");
     fprintf(stderr, "  -n   Report numeric progress\n");
-    fprintf(stderr, "  -p   Report progress\n");
+    fprintf(stderr, "  -p   Report progress (default)\n");
     fprintf(stderr, "  -q   Quiet\n");
+    fprintf(stderr, "  -r   Read from the memory card\n");
+    fprintf(stderr, "  -w   Write to the memory card (default)\n");
     fprintf(stderr, "  -y   Accept automatically found memory card\n");
     fprintf(stderr, "\n");
-    fprintf(stderr, "The inputpath specifies the location of the image to write to\n");
-    fprintf(stderr, "the memory card. If it is unspecified or '-', the image will be\n");
-    fprintf(stderr, "read from stdin.\n");
+    fprintf(stderr, "The [path] specifies the location of the image to copy to or from\n");
+    fprintf(stderr, "the memory card. If it is unspecified or '-', the image will either\n");
+    fprintf(stderr, "be read from stdin (-w) or written to stdout (-r).\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Examples:\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Write the file sdcard.img to an automatically detected SD Card:\n");
+    fprintf(stderr, "  %s sdcard.img\n", argv0);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Read the master boot record (512 bytes @ offset 0) from /dev/sdc:\n");
+    fprintf(stderr, "  %s -r -s 512 -o 0 -d /dev/sdc mbr.img\n", argv0);
     fprintf(stderr, "\n");
     fprintf(stderr, "Offset and size may be specified with the following suffixes:\n");
     for (size_t i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++)
@@ -225,9 +239,12 @@ void pretty_size(size_t amount, char *out)
         sprintf(out, "%d bytes", (int) amount);
 }
 
-void report_progress(size_t written, size_t total, bool numeric)
+void report_progress(size_t written, size_t total)
 {
-    if (numeric) {
+    if (quiet)
+	return;
+
+    if (numeric_progress) {
         // If numeric, write the percentage if we can figure it out.
         printf("%d\n", calculate_progress(written, total));
     } else {
@@ -244,16 +261,58 @@ void report_progress(size_t written, size_t total, bool numeric)
     }
 }
 
+void copy(int from_fd, int to_fd, size_t total_to_copy)
+{
+    report_progress(0, total_to_copy);
+
+    char *buffer = malloc(COPY_BUFFER_SIZE);
+    off_t total_written = 0;
+    while (total_to_copy == 0 || total_written < total_to_copy) {
+        size_t amount_to_read = COPY_BUFFER_SIZE;
+        if (total_to_copy != 0 && total_to_copy < amount_to_read)
+            amount_to_read = total_to_copy;
+
+        ssize_t amount_read = read(from_fd, buffer, amount_to_read);
+        if (amount_read < 0)
+            err(EXIT_FAILURE, "read");
+
+        if (amount_read == 0)
+            break;
+
+        char *ptr = buffer;
+        do {
+            ssize_t amount_written = write(to_fd, ptr, amount_read);
+            if (amount_written < 0) {
+                if (errno == EINTR)
+                    continue;
+                else
+                    err(EXIT_FAILURE, "write");
+            }
+
+            amount_read -= amount_written;
+            ptr += amount_written;
+            total_written += amount_written;
+        } while (amount_read > 0);
+
+	report_progress(total_written, total_to_copy);
+    }
+    free(buffer);
+
+    // Print a linefeed at the end so that the final progress report has
+    // a new line after it. Numeric progress already prints linefeeds, so
+    // don't add another on those.
+    if (!quiet && !numeric_progress)
+	printf("\n");
+}
+
 int main(int argc, char *argv[])
 {
-
     const char *mmc_device = 0;
-    const char *source = "-";
-    size_t total_to_write = 0;
+    const char *data_pathname = "-";
+    size_t total_to_copy = 0;
     off_t seek_offset = 0;
-    bool numeric_progress = false;
     bool accept_found_device = false;
-    bool quiet = false;
+    bool read_from_mmc = false;
 
     // Memory cards are too big to bother with systems
     // that don't support large file sizes any more.
@@ -261,13 +320,13 @@ int main(int argc, char *argv[])
         errx(EXIT_FAILURE, "recompile with largefile support");
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:s:o:npqy")) != -1) {
+    while ((opt = getopt(argc, argv, "d:s:o:npqrwy")) != -1) {
         switch (opt) {
         case 'd':
             mmc_device = optarg;
             break;
         case 's':
-            total_to_write = parse_size(optarg);
+            total_to_copy = parse_size(optarg);
             break;
         case 'o':
             seek_offset = parse_size(optarg);
@@ -282,6 +341,12 @@ int main(int argc, char *argv[])
         case 'q':
             quiet = true;
             break;
+        case 'r':
+	    read_from_mmc = true;
+	    break;
+        case 'w':
+	    read_from_mmc = false;
+	    break;
         case 'y':
             accept_found_device = true;
             break;
@@ -295,16 +360,23 @@ int main(int argc, char *argv[])
         errx(EXIT_FAILURE, "pick either -n or -q, but not both.");
 
     if (optind < argc)
-        source = argv[optind];
+        data_pathname = argv[optind];
+
+    if (read_from_mmc && total_to_copy == 0)
+	errx(EXIT_FAILURE, "Specify the amount to copy (-s) when reading from memory card.");
 
     if (!mmc_device) {
         mmc_device = find_mmc_device();
-        if (!mmc_device)
-            errx(EXIT_FAILURE, "memory card couldn't be found automatically (permissions?)");
+        if (!mmc_device) {
+	    if (getuid() != 0)
+		errx(EXIT_FAILURE, "Memory card couldn't be found automatically.\nTry running as root or specify -? for help");
+	    else
+		errx(EXIT_FAILURE, "No memory cards found.");
+	}
 
         if (!accept_found_device) {
-            if (strcmp(source, "-") == 0)
-                errx(EXIT_FAILURE, "Cannot confirm %s when writing data from stdin. Rerun with -y.", mmc_device);
+            if (strcmp(data_pathname, "-") == 0)
+                errx(EXIT_FAILURE, "Cannot confirm use of %s when using stdin/stdout. Rerun with -y if location is correct.", mmc_device);
 
             char sizestr[16];
             pretty_size(device_size(mmc_device), sizestr);
@@ -315,83 +387,60 @@ int main(int argc, char *argv[])
         }
     }
 
-    int input_fd = 0;
-    if (strcmp(source, "-") != 0) {
-        input_fd = open(source, O_RDONLY);
-        if (input_fd < 0)
-            err(EXIT_FAILURE, "%s", source);
+    int data_fd;
+    if (strcmp(data_pathname, "-") != 0) {
+	if (read_from_mmc)
+	    data_fd = open(data_pathname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	else
+	    data_fd = open(data_pathname, O_RDONLY);
+        if (data_fd < 0)
+            err(EXIT_FAILURE, "%s", data_pathname);
 
-        struct stat st;
-        if (fstat(input_fd, &st))
-            err(EXIT_FAILURE, "fstat");
+	// If writing to the MMC, cap the number of bytes to write to the file size.
+	if (!read_from_mmc) {
+	    struct stat st;
+	    if (fstat(data_fd, &st))
+		err(EXIT_FAILURE, "fstat");
 
-        if (total_to_write == 0 ||
-                st.st_size < total_to_write)
-            total_to_write = st.st_size;
+	    if (total_to_copy == 0 ||
+                st.st_size < total_to_copy)
+		total_to_copy = st.st_size;
+	}
+    } else {
+	// Reading from stdin or stdout.
+	if (read_from_mmc) {
+	    data_fd = STDOUT_FILENO;
+
+	    // Force quiet to true so that progress reports don't stomp on
+	    // the data.
+	    quiet = true;
+	} else
+	    data_fd = STDIN_FILENO;
     }
 
     if (numeric_progress &&
-            total_to_write == 0)
+            total_to_copy == 0)
         errx(EXIT_FAILURE, "Specify input size to report numeric progress");
 
-    // Don't access the device if someone is using it.
+    // Unmount everything so that our read and writes to the device are
+    // unaffected by file system caches or other concurrent activity.
     umount_all_on_dev(mmc_device);
 
-    int output_fd = open(mmc_device, O_WRONLY | O_SYNC);
-    if (output_fd < 0)
+    int mmc_fd = open(mmc_device, read_from_mmc ? O_RDONLY : (O_WRONLY | O_SYNC));
+    if (mmc_fd < 0)
         err(EXIT_FAILURE, "%s", mmc_device);
 
-    if (lseek(output_fd, seek_offset, SEEK_SET) == (off_t) -1)
+    if (lseek(mmc_fd, seek_offset, SEEK_SET) == (off_t) -1)
         err(EXIT_FAILURE, "lseek");
 
-    if (!quiet)
-        report_progress(0, total_to_write, numeric_progress);
+    if (read_from_mmc)
+	copy(mmc_fd, data_fd, total_to_copy);
+    else
+	copy(data_fd, mmc_fd, total_to_copy);
 
-    char *buffer = malloc(COPY_BUFFER_SIZE);
-    off_t total_written = 0;
-    while (total_to_write == 0 || total_written < total_to_write) {
-        size_t amount_to_read = COPY_BUFFER_SIZE;
-        if (total_to_write != 0 && total_to_write < amount_to_read)
-            amount_to_read = total_to_write;
+    close(mmc_fd);
+    if (data_fd != STDOUT_FILENO && data_fd != STDIN_FILENO)
+        close(data_fd);
 
-        ssize_t amount_read = read(input_fd, buffer, amount_to_read);
-        if (amount_read < 0)
-            err(EXIT_FAILURE, "read");
-
-        if (amount_read == 0)
-            break;
-
-        char *ptr = buffer;
-        do {
-            ssize_t amount_written = write(output_fd, ptr, amount_read);
-            if (amount_written < 0) {
-                if (errno == EINTR)
-                    continue;
-                else
-                    err(EXIT_FAILURE, "write");
-            }
-
-            amount_read -= amount_written;
-            ptr += amount_written;
-            total_written += amount_written;
-        } while (amount_read > 0);
-
-        if (!quiet)
-            report_progress(total_written, total_to_write, numeric_progress);
-    }
-    close(output_fd);
-    if (input_fd != 0)
-        close(input_fd);
-
-    if (!quiet) {
-        report_progress(total_written, total_to_write, numeric_progress);
-
-	// Numeric progress already prints linefeeds, so we don't need
-	// one at the very end.
-	if (!numeric_progress)
-	    printf("\n");
-    }
-
-    free(buffer);
     exit(EXIT_SUCCESS);
 }
