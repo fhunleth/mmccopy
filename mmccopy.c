@@ -32,6 +32,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "config.h"
+
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
 #define ONE_KiB  (1024ULL)
@@ -63,16 +65,22 @@ struct suffix_multiplier suffix_multipliers[] = {
 bool numeric_progress = false;
 bool quiet = false;
 
-void usage(const char *argv0)
+void print_version()
+{
+    fprintf(stderr, "%s version %s\n", PACKAGE_NAME, PACKAGE_VERSION);
+}
+
+void print_usage(const char *argv0)
 {
     fprintf(stderr, "Usage: %s [options] [path]\n", argv0);
     fprintf(stderr, "  -d <Device file for the memory card>\n");
-    fprintf(stderr, "  -s <Amount to read/write>\n");
-    fprintf(stderr, "  -o <Offset from the beginning of the memory card>\n");
     fprintf(stderr, "  -n   Report numeric progress\n");
+    fprintf(stderr, "  -o <Offset from the beginning of the memory card>\n");
     fprintf(stderr, "  -p   Report progress (default)\n");
     fprintf(stderr, "  -q   Quiet\n");
     fprintf(stderr, "  -r   Read from the memory card\n");
+    fprintf(stderr, "  -s <Amount to read/write>\n");
+    fprintf(stderr, "  -v   Print out the version and exit\n");
     fprintf(stderr, "  -w   Write to the memory card (default)\n");
     fprintf(stderr, "  -y   Accept automatically found memory card\n");
     fprintf(stderr, "\n");
@@ -320,7 +328,7 @@ int main(int argc, char *argv[])
         errx(EXIT_FAILURE, "recompile with largefile support");
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:s:o:npqrwy")) != -1) {
+    while ((opt = getopt(argc, argv, "d:s:o:npqrvwy")) != -1) {
         switch (opt) {
         case 'd':
             mmc_device = optarg;
@@ -342,16 +350,20 @@ int main(int argc, char *argv[])
             quiet = true;
             break;
         case 'r':
-	    read_from_mmc = true;
-	    break;
+            read_from_mmc = true;
+            break;
         case 'w':
 	    read_from_mmc = false;
 	    break;
         case 'y':
             accept_found_device = true;
             break;
+        case 'v':
+            print_version();
+            exit(EXIT_SUCCESS);
+            break;
         default: /* '?' */
-            usage(argv[0]);
+            print_usage(argv[0]);
             exit(EXIT_FAILURE);
         }
     }

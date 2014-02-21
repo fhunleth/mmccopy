@@ -1,5 +1,5 @@
 AC_PREREQ([2.69])
-AC_INIT([mmccopy], [0.1], [fhunleth@troodon-software.com])
+AC_INIT([mmccopy], [1.0.0], [fhunleth@troodon-software.com])
 AC_CONFIG_SRCDIR([mmccopy.c])
 AC_CONFIG_HEADERS([config.h])
 
