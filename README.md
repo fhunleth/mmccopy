@@ -1,4 +1,5 @@
 # Overview
+[![Build Status](https://travis-ci.org/fhunleth/mmccopy.png)](https://travis-ci.org/fhunleth/mmccopy)
 
 The `mmccopy` utility is an easier-to-use alternative to `dd` for
 writing images to SDCards and MMC memory. It has the following
