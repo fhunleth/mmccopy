@@ -8,3 +8,10 @@ config.status
 mmccopy
 stamp-h1
 *.tar.gz
+Makefile.in
+aclocal.m4
+config.h.in
+configure
+depcomp
+install-sh
+missing

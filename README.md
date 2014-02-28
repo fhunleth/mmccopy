@@ -35,6 +35,7 @@ Here's an example run:
 
 Clone or download the source code and run the following:
 
+    ./autogen.sh
     ./configure
     make
     make install
