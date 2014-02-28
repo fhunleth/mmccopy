@@ -20,6 +20,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "config.h"
+
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -31,8 +33,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-
-#include "config.h"
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
