@@ -121,6 +121,69 @@ size_t parse_size(const char *str)
     return 0;
 }
 
+char *unescape_string(const char *input)
+{
+    char *result = (char *) malloc(strlen(input) + 1);
+    char *p = result;
+    while (*input) {
+        if (*input != '\\') {
+            *p = *input;
+            p++;
+            input++;
+        } else {
+            input++;
+            switch (*input) {
+            case '\"':
+            case '\\':
+            default:
+                *p = *input++;
+                break;
+            case 'a':
+                *p = '\a'; input++;
+                break;
+            case 'b':
+                *p = '\b'; input++;
+                break;
+            case 'f':
+                *p = '\f'; input++;
+                break;
+            case 'n':
+                *p = '\n'; input++;
+                break;
+            case 'r':
+                *p = '\r'; input++;
+                break;
+            case 't':
+                *p = '\t'; input++;
+                break;
+            case 'v':
+                *p = '\v'; input++;
+                break;
+            case '0':
+            case '1':
+            case '2':
+            case '3':
+            case '4':
+            case '5':
+            case '6':
+            case '7': // octal
+            {
+                int digits = (input[1] && input[1] >= '0' && input[1] <= '7' ? 1 : 0)
+                             + (input[1] && input[2] && input[2] >= '0' && input[2] <= '7' ? 1 : 0);
+                int result = *input++ - '0';
+                while (digits--)
+                    result = result * 8 + *input++ - '0';
+                *p = (char) result;
+                break;
+            }
+            }
+            p++;
+        }
+    }
+    *p = 0;
+    return result;
+}
+
 void umount_all_on_dev(const char *mmc_device)
 {
     FILE *fp = fopen("/proc/mounts", "r");
@@ -147,7 +210,8 @@ void umount_all_on_dev(const char *mmc_device)
             if (todo_ix == NUM_ELEMENTS(todo))
                 errx(EXIT_FAILURE, "Device mounted too many times");
 
-            todo[todo_ix++] = strdup(mountpoint);
+            // strings from /proc/mounts are escaped, so unescape them
+            todo[todo_ix++] = unescape_string(mountpoint);
         }
     }
     fclose(fp);
