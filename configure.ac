@@ -5,7 +5,6 @@ AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 
 # Checks for programs.
-AC_PROG_CC_C99
 AC_PROG_INSTALL
 
 # Checks for header files.

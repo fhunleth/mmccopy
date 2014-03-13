@@ -97,7 +97,8 @@ void print_usage(const char *argv0)
     fprintf(stderr, "  %s -r -s 512 -o 0 -d /dev/sdc mbr.img\n", argv0);
     fprintf(stderr, "\n");
     fprintf(stderr, "Offset and size may be specified with the following suffixes:\n");
-    for (size_t i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++)
+    size_t i;
+    for (i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++)
         fprintf(stderr, "  %3s  %d\n", suffix_multipliers[i].suffix, (int) suffix_multipliers[i].multiple);
 }
 
@@ -105,6 +106,7 @@ size_t parse_size(const char *str)
 {
     char *suffix;
     size_t value = strtoul(str, &suffix, 10);
+    size_t i;
 
     if (suffix == str)
         errx(EXIT_FAILURE, "Expecting number but got '%s'", str);
@@ -112,7 +114,7 @@ size_t parse_size(const char *str)
     if (*suffix == '\0')
         return value;
 
-    for (size_t i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++) {
+    for (i = 0; i < NUM_ELEMENTS(suffix_multipliers); i++) {
         if (strcmp(suffix_multipliers[i].suffix, suffix) == 0)
             return value * suffix_multipliers[i].multiple;
     }
@@ -192,6 +194,7 @@ void umount_all_on_dev(const char *mmc_device)
 
     char *todo[64] = {0};
     int todo_ix = 0;
+    int i;
 
     while (!feof(fp)) {
         char line[256] = {0};
@@ -216,7 +219,7 @@ void umount_all_on_dev(const char *mmc_device)
     }
     fclose(fp);
 
-    for (int i = 0; i < todo_ix; i++) {
+    for (i = 0; i < todo_ix; i++) {
         if (umount(todo[i]) < 0)
             err(EXIT_FAILURE, "umount %s", todo[i]);
 
@@ -257,11 +260,13 @@ char *find_mmc_device()
 {
     char *possible[64] = {0};
     size_t possible_ix = 0;
+    char c;
+    size_t i;
 
     // Scan memory cards connected via USB. These are /dev/sd_ devices.
     // NOTE: Don't scan /dev/sda, since I don't think this is ever right
     // for any use case.
-    for (char c = 'b'; c != 'z'; c++) {
+    for (c = 'b'; c != 'z'; c++) {
         char devpath[64];
         sprintf(devpath, "/dev/sd%c", c);
 
@@ -270,9 +275,9 @@ char *find_mmc_device()
     }
 
     // Scan the mmcblk devices
-    for (int i = 0; i < 16; i++) {
+    for (i = 0; i < 16; i++) {
         char devpath[64];
-        sprintf(devpath, "/dev/mmcblk%d", i);
+        sprintf(devpath, "/dev/mmcblk%d", (int) i);
 
         if (is_mmc_device(devpath) && possible_ix < NUM_ELEMENTS(possible))
             possible[possible_ix++] = strdup(devpath);
@@ -284,7 +289,7 @@ char *find_mmc_device()
         return possible[0];
     else {
         fprintf(stderr, "Too many possible memory cards found: \n");
-        for (size_t i = 0; i < possible_ix; i++)
+        for (i = 0; i < possible_ix; i++)
             fprintf(stderr, "  %s\n", possible[i]);
         fprintf(stderr, "Pick one and specify it explicitly on the commandline.\n");
         exit(EXIT_FAILURE);
