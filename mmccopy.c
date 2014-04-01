@@ -531,16 +531,20 @@ int main(int argc, char *argv[])
             total_to_copy == 0)
         errx(EXIT_FAILURE, "Specify input size to report numeric progress");
 
-    // Update the progress to 0% to give the user quick feedback
-    report_progress(0, total_to_copy);
-
     // Unmount everything so that our read and writes to the device are
     // unaffected by file system caches or other concurrent activity.
     umount_all_on_dev(mmc_device);
 
     int mmc_fd = open(mmc_device, read_from_mmc ? O_RDONLY : (O_WRONLY | O_SYNC));
-    if (mmc_fd < 0)
-        err(EXIT_FAILURE, "%s", mmc_device);
+    if (mmc_fd < 0) {
+        if (errno == EROFS)
+            errx(EXIT_FAILURE, "%s isn't writable. Check permissions or write-protect switch", mmc_device);
+        else
+            err(EXIT_FAILURE, "%s", mmc_device);
+    }
+
+    // Update the progress to 0% to give the user quick feedback
+    report_progress(0, total_to_copy);
 
     if (trim_mmc_device)
         trim_mmc(mmc_fd);
