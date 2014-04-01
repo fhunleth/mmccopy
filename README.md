@@ -55,8 +55,8 @@ Usage: mmccopy [options] [path]
   -p   Report progress (default)
   -q   Quiet
   -r   Read from the memory card
-  -t   Run the TRIM command on the memory card before copying
   -s <Amount to read/write>
+  -t   Run the TRIM command on the memory card before copying
   -v   Print out the version and exit
   -w   Write to the memory card (default)
   -y   Accept automatically found memory card
