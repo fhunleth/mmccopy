@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include <linux/fs.h>
+//#ifndef BLKDISCARD
+//#define BLKDISCARD _IO(0x12,119)
+//#endif
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
@@ -80,6 +86,7 @@ void print_usage(const char *argv0)
     fprintf(stderr, "  -q   Quiet\n");
     fprintf(stderr, "  -r   Read from the memory card\n");
     fprintf(stderr, "  -s <Amount to read/write>\n");
+    fprintf(stderr, "  -t   Run the TRIM command on the memory card\n");
     fprintf(stderr, "  -v   Print out the version and exit\n");
     fprintf(stderr, "  -w   Write to the memory card (default)\n");
     fprintf(stderr, "  -y   Accept automatically found memory card\n");
@@ -296,6 +303,21 @@ char *find_mmc_device()
     }
 }
 
+void trim_mmc(int fd)
+{
+    // Run the TRIM command on the MMC file handle to free all currently
+    // allocated blocks back to the MMC firmware.
+    uint64_t range[2];
+
+    range[0] = 0;
+    if (ioctl(fd, BLKGETSIZE64, &range[1]))
+        err(EXIT_FAILURE, "Can't get size of device. Check that device is block device");
+
+    if (ioctl(fd, BLKDISCARD, &range))
+        err(EXIT_FAILURE, "BLKDISCARD (TRIM command) failed");
+
+}
+
 int calculate_progress(size_t written, size_t total)
 {
     if (total > 0)
@@ -340,8 +362,6 @@ void report_progress(size_t written, size_t total)
 
 void copy(int from_fd, int to_fd, size_t total_to_copy)
 {
-    report_progress(0, total_to_copy);
-
     char *buffer = malloc(COPY_BUFFER_SIZE);
     off_t total_written = 0;
     while (total_to_copy == 0 || total_written < total_to_copy) {
@@ -390,6 +410,7 @@ int main(int argc, char *argv[])
     off_t seek_offset = 0;
     bool accept_found_device = false;
     bool read_from_mmc = false;
+    bool trim_mmc_device = false;
 
     // Memory cards are too big to bother with systems
     // that don't support large file sizes any more.
@@ -397,7 +418,7 @@ int main(int argc, char *argv[])
         errx(EXIT_FAILURE, "recompile with largefile support");
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:s:o:npqrvwy")) != -1) {
+    while ((opt = getopt(argc, argv, "d:s:o:npqrtvwy")) != -1) {
         switch (opt) {
         case 'd':
             mmc_device = optarg;
@@ -420,6 +441,9 @@ int main(int argc, char *argv[])
             break;
         case 'r':
             read_from_mmc = true;
+            break;
+        case 't':
+            trim_mmc_device = true;
             break;
         case 'w':
 	    read_from_mmc = false;
@@ -445,6 +469,9 @@ int main(int argc, char *argv[])
 
     if (read_from_mmc && total_to_copy == 0)
 	errx(EXIT_FAILURE, "Specify the amount to copy (-s) when reading from memory card.");
+
+    if (read_from_mmc && trim_mmc_device)
+        errx(EXIT_FAILURE, "You probably don't want to TRIM the device if you're going to read from it.");
 
     if (!mmc_device) {
         mmc_device = find_mmc_device();
@@ -503,6 +530,9 @@ int main(int argc, char *argv[])
             total_to_copy == 0)
         errx(EXIT_FAILURE, "Specify input size to report numeric progress");
 
+    // Update the progress to 0% to give the user quick feedback
+    report_progress(0, total_to_copy);
+
     // Unmount everything so that our read and writes to the device are
     // unaffected by file system caches or other concurrent activity.
     umount_all_on_dev(mmc_device);
@@ -510,6 +540,9 @@ int main(int argc, char *argv[])
     int mmc_fd = open(mmc_device, read_from_mmc ? O_RDONLY : (O_WRONLY | O_SYNC));
     if (mmc_fd < 0)
         err(EXIT_FAILURE, "%s", mmc_device);
+
+    if (trim_mmc_device)
+        trim_mmc(mmc_fd);
 
     if (lseek(mmc_fd, seek_offset, SEEK_SET) == (off_t) -1)
         err(EXIT_FAILURE, "lseek");
