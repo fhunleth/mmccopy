@@ -24,6 +24,11 @@ features:
   user before writing anything by default to avoid accidental
   overwrites.
 
+  6. Optionally run a TRIM command on the MMC or SDCard before writing
+  to it. This lets you quickly reset the entire memory contents even
+  if you're only going to write a fraction of it. This is only available
+  on devices and SDCard readers that support the TRIM command.
+
 Here's an example run:
 
     $ sudo mmccopy -p sdcard.img
@@ -50,6 +55,7 @@ Usage: mmccopy [options] [path]
   -p   Report progress (default)
   -q   Quiet
   -r   Read from the memory card
+  -t   Run the TRIM command on the memory card before copying
   -s <Amount to read/write>
   -v   Print out the version and exit
   -w   Write to the memory card (default)

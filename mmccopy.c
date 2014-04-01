@@ -36,9 +36,10 @@
 #include <unistd.h>
 
 #include <linux/fs.h>
-//#ifndef BLKDISCARD
-//#define BLKDISCARD _IO(0x12,119)
-//#endif
+
+#ifndef BLKDISCARD
+#define BLKDISCARD _IO(0x12,119)
+#endif
 
 #define NUM_ELEMENTS(X) (sizeof(X) / sizeof(X[0]))
 
@@ -86,7 +87,7 @@ void print_usage(const char *argv0)
     fprintf(stderr, "  -q   Quiet\n");
     fprintf(stderr, "  -r   Read from the memory card\n");
     fprintf(stderr, "  -s <Amount to read/write>\n");
-    fprintf(stderr, "  -t   Run the TRIM command on the memory card\n");
+    fprintf(stderr, "  -t   Run the TRIM command on the memory card before copying\n");
     fprintf(stderr, "  -v   Print out the version and exit\n");
     fprintf(stderr, "  -w   Write to the memory card (default)\n");
     fprintf(stderr, "  -y   Accept automatically found memory card\n");
