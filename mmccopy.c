@@ -68,9 +68,9 @@ struct suffix_multiplier suffix_multipliers[] = {
     {"GiB", ONE_GiB}
 };
 
-// Progress and verbosity global variables
-bool numeric_progress = false;
-bool quiet = false;
+// Global options
+static bool numeric_progress = false;
+static bool quiet = false;
 
 void print_version()
 {
@@ -81,6 +81,7 @@ void print_usage(const char *argv0)
 {
     fprintf(stderr, "Usage: %s [options] [path]\n", argv0);
     fprintf(stderr, "  -d <Device file for the memory card>\n");
+    fprintf(stderr, "  -f   Run SDCard auto-detection and print the device path\n");
     fprintf(stderr, "  -n   Report numeric progress\n");
     fprintf(stderr, "  -o <Offset from the beginning of the memory card>\n");
     fprintf(stderr, "  -p   Report progress (default)\n");
@@ -95,6 +96,8 @@ void print_usage(const char *argv0)
     fprintf(stderr, "The [path] specifies the location of the image to copy to or from\n");
     fprintf(stderr, "the memory card. If it is unspecified or '-', the image will either\n");
     fprintf(stderr, "be read from stdin (-w) or written to stdout (-r).\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "The -d argument does not need to be a device file. It can also be a regular file.\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Examples:\n");
     fprintf(stderr, "\n");
@@ -291,11 +294,15 @@ char *find_mmc_device()
             possible[possible_ix++] = strdup(devpath);
     }
 
-    if (possible_ix == 0)
-        return 0;
-    else if (possible_ix == 1)
-        return possible[0];
-    else {
+    if (possible_ix == 1) {
+	// Success.
+	return possible[0];
+    } else if (possible_ix == 0) {
+	if (getuid() != 0)
+	    errx(EXIT_FAILURE, "Memory card couldn't be found automatically.\nTry running as root or specify -? for help");
+	else
+	    errx(EXIT_FAILURE, "No memory cards found.");
+    } else {
         fprintf(stderr, "Too many possible memory cards found: \n");
         for (i = 0; i < possible_ix; i++)
             fprintf(stderr, "  %s\n", possible[i]);
@@ -419,11 +426,16 @@ int main(int argc, char *argv[])
         errx(EXIT_FAILURE, "recompile with largefile support");
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:s:o:npqrtvwy")) != -1) {
+    while ((opt = getopt(argc, argv, "d:fno:pqrs:tvwy")) != -1) {
         switch (opt) {
         case 'd':
             mmc_device = optarg;
             break;
+	case 'f':
+	    mmc_device = find_mmc_device();
+	    printf("%s", mmc_device);
+	    exit(EXIT_SUCCESS);
+	    break;
         case 's':
             total_to_copy = parse_size(optarg);
             break;
@@ -476,12 +488,6 @@ int main(int argc, char *argv[])
 
     if (!mmc_device) {
         mmc_device = find_mmc_device();
-        if (!mmc_device) {
-	    if (getuid() != 0)
-		errx(EXIT_FAILURE, "Memory card couldn't be found automatically.\nTry running as root or specify -? for help");
-	    else
-		errx(EXIT_FAILURE, "No memory cards found.");
-	}
 
         if (!accept_found_device) {
             if (strcmp(data_pathname, "-") == 0)
