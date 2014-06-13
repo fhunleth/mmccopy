@@ -326,10 +326,10 @@ void trim_mmc(int fd)
 
 }
 
-int calculate_progress(size_t written, size_t total)
+double calculate_progress(size_t written, size_t total)
 {
     if (total > 0)
-        return 100 * written / total;
+        return 100.0 * written / total;
     else
         return 0;
 }
@@ -353,12 +353,12 @@ void report_progress(size_t written, size_t total)
 
     if (numeric_progress) {
         // If numeric, write the percentage if we can figure it out.
-        printf("%d\n", calculate_progress(written, total));
+        printf("%.0f\n", calculate_progress(written, total));
     } else {
         // If this is for a human, then print the percent complete
         // if we can calculate it or the bytes written.
         if (total > 0)
-            printf("\r%d%%", calculate_progress(written, total));
+            printf("\r%.0f%%", calculate_progress(written, total));
         else {
             char sizestr[32];
             pretty_size(written, sizestr);
