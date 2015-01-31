@@ -207,14 +207,12 @@ void umount_all_on_dev(const char *mmc_device)
     int todo_ix = 0;
     int i;
 
-    while (!feof(fp)) {
-        char line[256] = {0};
-        if (!fgets(line, sizeof(line), fp))
-            break;
-
+    char line[512] = {0};
+    while (!feof(fp) &&
+            fgets(line, sizeof(line), fp)) {
         char devname[64];
         char mountpoint[256];
-        if (sscanf(line, "%s %s", devname, mountpoint) != 2)
+        if (sscanf(line, "%63s %255s", devname, mountpoint) != 2)
             continue;
 
         if (strstr(devname, mmc_device) == devname) {
@@ -230,12 +228,25 @@ void umount_all_on_dev(const char *mmc_device)
     }
     fclose(fp);
 
+    int mtab_exists = (access("/etc/mtab", F_OK) != -1);
     for (i = 0; i < todo_ix; i++) {
-        if (umount(todo[i]) < 0)
-            err(EXIT_FAILURE, "umount %s", todo[i]);
-
-        free(todo[i]);
+        if (mtab_exists) {
+            // If /etc/mtab, then call umount(8) so that
+            // gets updated correctly.
+            char cmdline[384];
+            sprintf(cmdline, "/bin/umount %s", todo[i]);
+            int rc = system(cmdline);
+            if (rc != 0)
+                err(EXIT_FAILURE, "%s", cmdline);
+        } else {
+            // No /etc/mtab, so call the kernel directly.
+            if (umount(todo[i]) < 0)
+                err(EXIT_FAILURE, "umount %s", todo[i]);
+        }
     }
+
+    for (i = 0; i < todo_ix; i++)
+        free(todo[i]);
 }
 
 size_t device_size(const char *devpath)
